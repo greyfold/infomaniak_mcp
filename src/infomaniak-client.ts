@@ -28,6 +28,7 @@ export interface ApiResponse<T = unknown> {
   error?: {
     code: string;
     description: string;
+    errors?: unknown[];
   };
 }
 
@@ -359,6 +360,11 @@ export class InfomaniakClient {
         const errorJson = JSON.parse(errorText);
         errorMessage =
           errorJson.error?.description ?? errorJson.message ?? errorText;
+        // Validation errors (e.g. 422) list the offending fields in
+        // `error.errors`; without them the message is just "Validation failed".
+        if (Array.isArray(errorJson.error?.errors) && errorJson.error.errors.length > 0) {
+          errorMessage += ` ${JSON.stringify(errorJson.error.errors)}`;
+        }
       } catch {
         errorMessage = errorText;
       }

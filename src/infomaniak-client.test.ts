@@ -141,6 +141,42 @@ describe('InfomaniakClient', () => {
       );
     });
 
+    it('should include field-level validation errors in the message', async () => {
+      const fieldErrors = [
+        { code: 'validation_failed', description: 'The domain field is required.', context: { attribute: 'domain' } },
+      ];
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        headers: { get: () => null },
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              result: 'error',
+              error: { code: 'validation_failed', description: 'Validation failed', errors: fieldErrors },
+            })
+          ),
+      });
+
+      await expect(client.ping()).rejects.toThrow(
+        `Infomaniak API Error (422): Validation failed ${JSON.stringify(fieldErrors)}`
+      );
+    });
+
+    it('should not append an empty validation error list', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        headers: { get: () => null },
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({ error: { code: 'validation_failed', description: 'Validation failed', errors: [] } })
+          ),
+      });
+
+      await expect(client.ping()).rejects.toThrow(/^Infomaniak API Error \(422\): Validation failed$/);
+    });
+
     it('should handle non-JSON error response', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
