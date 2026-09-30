@@ -272,6 +272,9 @@ export interface Product {
   customer_name: string;
 }
 
+/** Site creation is slow on the API side (it can exceed 30s). */
+const CREATE_SITE_TIMEOUT_MS = 120_000;
+
 class TokenBucket {
   private tokens: number;
   private lastRefill: number;
@@ -325,6 +328,7 @@ export class InfomaniakClient {
     path: string,
     body?: unknown,
     queryParams?: Record<string, string | number | boolean | undefined>,
+    timeoutMs: number = this.timeoutMs,
   ): Promise<T> {
     let url = `${this.baseUrl}${path}`;
 
@@ -344,7 +348,7 @@ export class InfomaniakClient {
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs),
     };
 
     if (body && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
@@ -387,6 +391,7 @@ export class InfomaniakClient {
     path: string,
     body?: unknown,
     queryParams?: Record<string, string | number | boolean | undefined>,
+    timeoutMs?: number,
   ): Promise<T> {
     await this.bucket.take();
 
@@ -394,7 +399,7 @@ export class InfomaniakClient {
 
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
       try {
-        return await this.executeRequest<T>(method, path, body, queryParams);
+        return await this.executeRequest<T>(method, path, body, queryParams, timeoutMs);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         const status = (error as { status?: number }).status;
@@ -576,12 +581,25 @@ export class InfomaniakClient {
     return this.request<ApiResponse<Site>>('GET', `/1/web/${hostingId}/site/${siteId}`);
   }
 
+  /**
+   * Create a site on a web hosting.
+   *
+   * The API expects `domain` (the FQDN) and `directory` (the document root,
+   * e.g. `/sites/example.com`). Site creation can take longer than the default
+   * request timeout, so a longer timeout is used for this call.
+   */
   async createSite(hostingId: number, site: {
-    fqdn: string;
-    path?: string;
+    domain: string;
+    directory: string;
     php_version?: string;
   }): Promise<ApiResponse<Site>> {
-    return this.request<ApiResponse<Site>>('POST', `/1/web/${hostingId}/site`, site);
+    return this.request<ApiResponse<Site>>(
+      'POST',
+      `/1/web/${hostingId}/site`,
+      site,
+      undefined,
+      Math.max(this.timeoutMs, CREATE_SITE_TIMEOUT_MS),
+    );
   }
 
   async updateSite(hostingId: number, siteId: number, site: {

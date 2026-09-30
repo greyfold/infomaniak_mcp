@@ -423,28 +423,40 @@ describe('InfomaniakClient', () => {
       );
     });
 
-    it('should create a site', async () => {
+    it('should create a site with domain and directory', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () =>
           Promise.resolve({
             result: 'success',
-            data: { id: 50, fqdn: 'newsite.com' },
+            data: { id: 50 },
           }),
       });
 
       await client.createSite(100, {
-        fqdn: 'newsite.com',
-        php_version: '8.2',
+        domain: 'example.com',
+        directory: '/sites/example.com',
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
         'https://api.infomaniak.com/1/web/100/site',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ fqdn: 'newsite.com', php_version: '8.2' }),
+          body: JSON.stringify({ domain: 'example.com', directory: '/sites/example.com' }),
         })
       );
+    });
+
+    it('should use a timeout longer than the default for site creation', async () => {
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ result: 'success', data: { id: 50 } }),
+      });
+
+      await client.createSite(100, { domain: 'example.com', directory: '/sites/example.com' });
+
+      expect(timeoutSpy).toHaveBeenCalledWith(120_000);
     });
   });
 
