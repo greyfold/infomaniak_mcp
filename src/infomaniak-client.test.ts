@@ -502,4 +502,100 @@ describe('InfomaniakClient', () => {
       );
     });
   });
+
+  describe('retry policy', () => {
+    const serverError = () => ({
+      ok: false,
+      status: 503,
+      headers: { get: () => null },
+      text: () => Promise.resolve('Service Unavailable'),
+    });
+    const rateLimited = () => ({
+      ok: false,
+      status: 429,
+      headers: { get: (name: string) => (name === 'Retry-After' ? '1' : null) },
+      text: () => Promise.resolve('Rate limit exceeded'),
+    });
+    const success = () => ({
+      ok: true,
+      json: () => Promise.resolve({ result: 'success', data: {} }),
+    });
+
+    let retryingClient: InfomaniakClient;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      retryingClient = new InfomaniakClient({ token: 'test-token-123', maxAttempts: 3 });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should retry GET requests after a 5xx error', async () => {
+      mockFetch
+        .mockResolvedValueOnce(serverError())
+        .mockResolvedValueOnce(serverError())
+        .mockResolvedValueOnce(success());
+
+      const result = retryingClient.ping();
+      await vi.runAllTimersAsync();
+
+      await expect(result).resolves.toEqual({ result: 'success', data: {} });
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it.each(['POST', 'PUT', 'PATCH', 'DELETE'] as const)(
+      'should not retry %s requests after a 5xx error',
+      async (method) => {
+        mockFetch.mockResolvedValue(serverError());
+
+        const result = retryingClient.call(method, '/1/example', { key: 'value' });
+        const assertion = expect(result).rejects.toThrow('Infomaniak API Error (503)');
+        await vi.runAllTimersAsync();
+
+        await assertion;
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('should not retry a domain renewal after a 5xx error', async () => {
+      mockFetch.mockResolvedValue(serverError());
+
+      const result = retryingClient.renewDomain('example.com', 1);
+      const assertion = expect(result).rejects.toThrow('Infomaniak API Error (503)');
+      await vi.runAllTimersAsync();
+
+      await assertion;
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('should retry POST requests after a 429 error', async () => {
+      mockFetch
+        .mockResolvedValueOnce(rateLimited())
+        .mockResolvedValueOnce(success());
+
+      const result = retryingClient.call('POST', '/1/example', { key: 'value' });
+      await vi.runAllTimersAsync();
+
+      await expect(result).resolves.toEqual({ result: 'success', data: {} });
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('should not retry 4xx errors other than 429', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 404,
+        headers: { get: () => null },
+        text: () => Promise.resolve('Not Found'),
+      });
+
+      const result = retryingClient.ping();
+      const assertion = expect(result).rejects.toThrow('Infomaniak API Error (404)');
+      await vi.runAllTimersAsync();
+
+      await assertion;
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
 });

@@ -12,7 +12,7 @@ export interface InfomaniakConfig {
   baseUrl?: string;
   /** Request timeout in ms (default: 30000) */
   timeoutMs?: number;
-  /** Max retry attempts for 429/5xx errors (default: 3, set 1 to disable retries) */
+  /** Max attempts for 429 errors (any method) and 5xx errors (GET only) (default: 3, set 1 to disable retries) */
   maxAttempts?: number;
 }
 
@@ -392,8 +392,13 @@ export class InfomaniakClient {
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         const status = (error as { status?: number }).status;
+        // 429 means the request was rejected before being processed, so it is
+        // always safe to retry. A 5xx on a write may already have been applied
+        // (e.g. a domain renewal or a resource creation), so only reads are
+        // retried after a server error.
         const isRetryable =
-          status === 429 || (status !== undefined && status >= 500);
+          status === 429 ||
+          (method === 'GET' && status !== undefined && status >= 500);
 
         if (!isRetryable || attempt === this.maxAttempts) throw lastError;
 
